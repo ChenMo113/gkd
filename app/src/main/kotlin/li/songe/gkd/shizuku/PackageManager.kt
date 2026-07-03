@@ -25,6 +25,7 @@ class SafePackageManager(private val value: IPackageManager) {
     /**
      * 降级方案：使用标准 PackageManager API 获取应用列表
      * 当 Shizuku API 被系统拦截时使用，绕过 MIUI 的权限限制
+     * 借鉴 Owndroid 的实现方式
      */
     private fun getPackagesViaStandardApi(): List<PackageInfo> {
         return try {
@@ -32,7 +33,6 @@ class SafePackageManager(private val value: IPackageManager) {
             packages.map { applicationInfo ->
                 PackageInfo().apply {
                     packageName = applicationInfo.packageName
-                    // 可选：可以尝试设置其他字段，如 versionName 等，但需要额外查询
                     // 这里只保留包名，足以让 GKD 显示列表
                 }
             }
