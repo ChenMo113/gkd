@@ -1,72 +1,83 @@
 package li.songe.gkd.shizuku
 
 import android.Manifest
+import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.IPackageManager
 import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import li.songe.gkd.META
 import li.songe.gkd.app
 import li.songe.gkd.permission.Manifest_permission_GET_APP_OPS_STATS
 import li.songe.gkd.permission.canQueryPkgState
 import li.songe.gkd.util.AndroidTarget
 
-
 class SafePackageManager(private val value: IPackageManager) {
     companion object {
-        
         fun newBinder() = getShizukuService("package")?.let {
             SafePackageManager(IPackageManager.Stub.asInterface(it))
         }
 
         private var canUseGetInstalledApps = true
+
+        // 备用 Context 获取方式：从 Application 或系统服务获取
+        private fun getContext(): Context? {
+            return try {
+                app ?: android.app.ActivityThread.currentApplication()
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     val isSafeMode get() = safeInvokeShizuku { value.isSafeMode }
 
     /**
-     * 降级方案：使用标准 PackageManager API 获取应用列表
-     * 当 Shizuku API 被系统拦截时使用，绕过 MIUI 的权限限制
-     * 借鉴 Owndroid 的实现方式
+     * 获取已安装应用列表
+     * 完全使用标准 PackageManager API，不依赖 Shizuku 的 IPackageManager，
+     * 以绕过 MIUI 等系统的拦截。
      */
-    private fun getPackagesViaStandardApi(): List<PackageInfo> {
-        return try {
-            val packages = app.packageManager.getInstalledApplications(0)
-            packages.map { applicationInfo ->
-                PackageInfo().apply {
-                    packageName = applicationInfo.packageName
-                    // 这里只保留包名，足以让 GKD 显示列表
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("SafePackageManager", "标准 API 获取列表失败", e)
-            emptyList()
-        }
-    }
-
     fun getInstalledPackages(
         flags: Int,
         userId: Int = currentUserId,
     ): List<PackageInfo> {
-        // 1. 优先尝试通过 Shizuku 的 IPackageManager 获取
-        val result = safeInvokeShizuku {
-            if (AndroidTarget.CINNAMON_BUN) {
-                value.getInstalledPackagesV17(flags.toLong(), userId).list
-            } else if (AndroidTarget.TIRAMISU) {
-                value.getInstalledPackages(flags.toLong(), userId).list
-            } else {
-                value.getInstalledPackages(flags, userId).list
+        val context = getContext()
+        if (context == null) {
+            android.util.Log.e("SafePackageManager", "无法获取 Context，返回空列表")
+            return emptyList()
+        }
+
+        return try {
+            val pm = context.packageManager
+            val applications = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            applications.map { appInfo ->
+                PackageInfo().apply {
+                    packageName = appInfo.packageName
+                    // 复制完整的 ApplicationInfo 对象，避免后续引用空字段
+                    applicationInfo = appInfo
+
+                    // 尝试填充版本信息（可选）
+                    try {
+                        val pkgInfo = pm.getPackageInfo(packageName, 0)
+                        versionName = pkgInfo.versionName
+                        versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                            pkgInfo.longVersionCode.toInt()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            pkgInfo.versionCode
+                        }
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        // 忽略
+                    }
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("SafePackageManager", "获取列表失败", e)
+            emptyList()
         }
-
-        // 2. 如果获取成功且列表不为空，则直接返回
-        if (result != null && result.isNotEmpty()) {
-            return result
-        }
-
-        // 3. 如果获取失败或列表为空，则打印日志并降级使用标准 API
-        android.util.Log.w("SafePackageManager", "IPackageManager 获取列表失败或为空，降级使用标准 PackageManager API")
-        return getPackagesViaStandardApi()
     }
 
+    // 以下方法保持不变，但确保它们不会因 context 缺失而崩溃
     @Suppress("unused")
     fun getPackageInfo(
         packageName: String,
