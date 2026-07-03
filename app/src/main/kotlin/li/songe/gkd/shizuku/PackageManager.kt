@@ -8,7 +8,6 @@ import li.songe.gkd.app
 import li.songe.gkd.permission.Manifest_permission_GET_APP_OPS_STATS
 import li.songe.gkd.permission.canQueryPkgState
 import li.songe.gkd.util.AndroidTarget
-import rikka.shizuku.Shizuku
 
 
 class SafePackageManager(private val value: IPackageManager) {
@@ -24,31 +23,21 @@ class SafePackageManager(private val value: IPackageManager) {
     val isSafeMode get() = safeInvokeShizuku { value.isSafeMode }
 
     /**
-     * 通过执行 shell 命令 `pm list packages` 获取应用包名列表（备用方案）
-     * 当 Shizuku API 调用失败时使用，以绕过 MIUI 等系统的拦截
+     * 降级方案：使用标准 PackageManager API 获取应用列表
+     * 当 Shizuku API 被系统拦截时使用，绕过 MIUI 的权限限制
      */
-    private fun getPackagesViaShellCommand(): List<PackageInfo> {
+    private fun getPackagesViaStandardApi(): List<PackageInfo> {
         return try {
-            // 通过 Shizuku 执行 pm list packages 命令
-            val process = Shizuku.newProcess(arrayOf("pm", "list", "packages"), null, null)
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-
-            // 解析输出，格式为 "package:包名"
-            output.lines()
-                .mapNotNull { line ->
-                    if (line.startsWith("package:")) line.substringAfter("package:") else null
+            val packages = app.packageManager.getInstalledApplications(0)
+            packages.map { applicationInfo ->
+                PackageInfo().apply {
+                    packageName = applicationInfo.packageName
+                    // 可选：可以尝试设置其他字段，如 versionName 等，但需要额外查询
+                    // 这里只保留包名，足以让 GKD 显示列表
                 }
-                .mapNotNull { pkgName ->
-                    // 为每个包名创建一个基础的 PackageInfo 对象
-                    // 注意：此方式只能获取包名，其他信息（版本、应用名等）将为空
-                    // 但足以让 GKD 显示应用列表，避免列表为空
-                    PackageInfo().apply {
-                        packageName = pkgName
-                    }
-                }
+            }
         } catch (e: Exception) {
-            android.util.Log.e("SafePackageManager", "pm 命令执行失败", e)
+            android.util.Log.e("SafePackageManager", "标准 API 获取列表失败", e)
             emptyList()
         }
     }
@@ -73,9 +62,9 @@ class SafePackageManager(private val value: IPackageManager) {
             return result
         }
 
-        // 3. 如果获取失败或列表为空，则打印日志并降级使用 shell 命令
-        android.util.Log.w("SafePackageManager", "IPackageManager 获取列表失败或为空，降级使用 pm 命令")
-        return getPackagesViaShellCommand()
+        // 3. 如果获取失败或列表为空，则打印日志并降级使用标准 API
+        android.util.Log.w("SafePackageManager", "IPackageManager 获取列表失败或为空，降级使用标准 PackageManager API")
+        return getPackagesViaStandardApi()
     }
 
     @Suppress("unused")
