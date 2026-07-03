@@ -111,7 +111,7 @@ android {
         gkdSigningConfig
     }
 
-    buildTypes {
+ buildTypes {
         all {
             versionNameSuffix = gitInfo.versionNameSuffix
         }
@@ -119,13 +119,14 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")   // 强制使用 debug 签名
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
         }
         debug {
-            signingConfig = gkdSigningConfig
+            signingConfig = gkdSigningConfig   // debug 不变，仍然可以用自定义签名
             applicationIdSuffix = ".debug"
             resValue("color", "better_black", "#FF5D92")
             debugSuffixPairList.onEach { (key, value) ->
@@ -137,7 +138,7 @@ android {
         flavorDimensions += "channel"
         create("gkd") {
             isDefault = true
-            signingConfig = gkdSigningConfig
+            signingConfig = signingConfigs.getByName("debug")   // 强制使用 debug 签名
             resValue("bool", "is_accessibility_tool", "true")
         }
         create("play") {
